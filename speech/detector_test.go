@@ -5,10 +5,24 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func readSamplesFromFile(t *testing.T, path string) []float32 {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	samples := make([]float32, 0, len(data)/4)
+	for i := 0; i < len(data); i += 4 {
+		samples = append(samples, math.Float32frombits(binary.LittleEndian.Uint32(data[i:i+4])))
+	}
+	return samples
+}
 
 func TestDetectorConfigIsValid(t *testing.T) {
 	tcs := []struct {
@@ -117,19 +131,8 @@ func TestSpeechDetection(t *testing.T) {
 		require.NoError(t, sd.Destroy())
 	}()
 
-	readSamplesFromFile := func(path string) []float32 {
-		data, err := os.ReadFile(path)
-		require.NoError(t, err)
-
-		samples := make([]float32, 0, len(data)/4)
-		for i := 0; i < len(data); i += 4 {
-			samples = append(samples, math.Float32frombits(binary.LittleEndian.Uint32(data[i:i+4])))
-		}
-		return samples
-	}
-
-	samples := readSamplesFromFile("../testfiles/samples.pcm")
-	samples2 := readSamplesFromFile("../testfiles/samples2.pcm")
+	samples := readSamplesFromFile(t, "../testfiles/samples.pcm")
+	samples2 := readSamplesFromFile(t, "../testfiles/samples2.pcm")
 
 	t.Run("detect", func(t *testing.T) {
 		segments, err := sd.Detect(samples)
@@ -218,4 +221,148 @@ func TestSpeechDetection(t *testing.T) {
 			},
 		}, segments)
 	})
+}
+
+func TestRuntimeSharedAcrossStreams(t *testing.T) {
+	rt, err := NewRuntime(RuntimeConfig{
+		ModelPath:         "../testfiles/silero_vad.onnx",
+		NumSessions:       2,
+		IntraOpNumThreads: 1,
+		InterOpNumThreads: 1,
+	})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rt.Destroy())
+	}()
+
+	cfg := StreamConfig{
+		SampleRate: 16000,
+		Threshold:  0.5,
+	}
+	stream1, err := rt.NewStream(cfg)
+	require.NoError(t, err)
+	stream2, err := rt.NewStream(cfg)
+	require.NoError(t, err)
+
+	samples := readSamplesFromFile(t, "../testfiles/samples.pcm")
+	samples2 := readSamplesFromFile(t, "../testfiles/samples2.pcm")
+
+	segments1, err := stream1.Detect(samples)
+	require.NoError(t, err)
+	require.Equal(t, []Segment{
+		{
+			SpeechStartAt: 1.056,
+			SpeechEndAt:   1.632,
+		},
+		{
+			SpeechStartAt: 2.88,
+			SpeechEndAt:   3.232,
+		},
+		{
+			SpeechStartAt: 4.448,
+			SpeechEndAt:   0,
+		},
+	}, segments1)
+
+	segments2, err := stream2.Detect(samples2)
+	require.NoError(t, err)
+	require.Equal(t, []Segment{
+		{
+			SpeechStartAt: 3.008,
+			SpeechEndAt:   6.24,
+		},
+		{
+			SpeechStartAt: 7.072,
+			SpeechEndAt:   8.16,
+		},
+	}, segments2)
+}
+
+func TestRuntimeSharedAcrossConcurrentStreams(t *testing.T) {
+	rt, err := NewRuntime(RuntimeConfig{
+		ModelPath:         "../testfiles/silero_vad.onnx",
+		NumSessions:       2,
+		IntraOpNumThreads: 1,
+		InterOpNumThreads: 1,
+	})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rt.Destroy())
+	}()
+
+	cfg := StreamConfig{
+		SampleRate: 16000,
+		Threshold:  0.5,
+	}
+	stream1, err := rt.NewStream(cfg)
+	require.NoError(t, err)
+	stream2, err := rt.NewStream(cfg)
+	require.NoError(t, err)
+
+	samples := readSamplesFromFile(t, "../testfiles/samples.pcm")
+	samples2 := readSamplesFromFile(t, "../testfiles/samples2.pcm")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	var segments1 []Segment
+	var err1 error
+	go func() {
+		defer wg.Done()
+		segments1, err1 = stream1.Detect(samples)
+	}()
+
+	var segments2 []Segment
+	var err2 error
+	go func() {
+		defer wg.Done()
+		segments2, err2 = stream2.Detect(samples2)
+	}()
+
+	wg.Wait()
+
+	require.NoError(t, err1)
+	require.NoError(t, err2)
+	require.Equal(t, []Segment{
+		{
+			SpeechStartAt: 1.056,
+			SpeechEndAt:   1.632,
+		},
+		{
+			SpeechStartAt: 2.88,
+			SpeechEndAt:   3.232,
+		},
+		{
+			SpeechStartAt: 4.448,
+			SpeechEndAt:   0,
+		},
+	}, segments1)
+	require.Equal(t, []Segment{
+		{
+			SpeechStartAt: 3.008,
+			SpeechEndAt:   6.24,
+		},
+		{
+			SpeechStartAt: 7.072,
+			SpeechEndAt:   8.16,
+		},
+	}, segments2)
+}
+
+func TestStreamDetectAfterRuntimeDestroy(t *testing.T) {
+	rt, err := NewRuntime(RuntimeConfig{
+		ModelPath: "../testfiles/silero_vad.onnx",
+	})
+	require.NoError(t, err)
+
+	stream, err := rt.NewStream(StreamConfig{
+		SampleRate: 16000,
+		Threshold:  0.5,
+	})
+	require.NoError(t, err)
+	require.NoError(t, rt.Destroy())
+
+	samples := readSamplesFromFile(t, "../testfiles/samples.pcm")
+	_, err = stream.Detect(samples)
+	require.ErrorContains(t, err, "runtime is destroyed")
 }

@@ -17,6 +17,66 @@
 - ONNX Runtime (v1.18.1)
 - A [Silero VAD](https://github.com/snakers4/silero-vad) model (v5)
 
+### Usage
+
+For multi-stream applications, create one shared runtime and then create one stream per audio source.
+The runtime owns the ONNX Runtime environment and a small pool of sessions, while each stream owns its
+own VAD state.
+
+```go
+package main
+
+import "github.com/streamer45/silero-vad-go/speech"
+
+func main() {
+	rt, err := speech.NewRuntime(speech.RuntimeConfig{
+		ModelPath:   "testfiles/silero_vad.onnx",
+		NumSessions: 2,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer rt.Destroy()
+
+	stream, err := rt.NewStream(speech.StreamConfig{
+		SampleRate: 16000,
+		Threshold:  0.5,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	var pcm []float32 // Fill with 16 kHz PCM samples.
+	segments, err := stream.Detect(pcm)
+	if err != nil {
+		panic(err)
+	}
+
+	_ = segments
+}
+```
+
+`NumSessions` controls how many model sessions are loaded and shared across streams. The default is `1`.
+Each `Stream` should be used serially by a single audio source. Different streams can run concurrently
+and share the same runtime.
+
+The legacy `Detector` API is still available for simple single-stream use:
+
+```go
+detector, err := speech.NewDetector(speech.DetectorConfig{
+	ModelPath:  "testfiles/silero_vad.onnx",
+	SampleRate: 16000,
+	Threshold:  0.5,
+})
+if err != nil {
+	panic(err)
+}
+defer detector.Destroy()
+
+var pcm []float32 // Fill with 16 kHz PCM samples.
+segments, err := detector.Detect(pcm)
+```
+
 ### Development
 
 In order to build and/or run this library, you need to export (or pass) some env variables to point to the ONNX runtime files.
