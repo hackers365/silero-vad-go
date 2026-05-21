@@ -1,3 +1,12 @@
+#if defined(_WIN32) && !defined(_MSC_VER)
+#ifndef _stdcall
+#define _stdcall __stdcall
+#endif
+#ifndef _Return_type_success_
+#define _Return_type_success_(X)
+#endif
+#endif
+
 #include "onnxruntime_c_api.h"
 
 const OrtApi* OrtGetApi();
@@ -16,7 +25,8 @@ OrtStatus* OrtApiSetIntraOpNumThreads(OrtApi* api, OrtSessionOptions* opts, int 
 OrtStatus* OrtApiSetInterOpNumThreads(OrtApi* api, OrtSessionOptions* opts, int inter_op_num_threads);
 OrtStatus* OrtApiSetSessionGraphOptimizationLevel(OrtApi* api, OrtSessionOptions* opts, GraphOptimizationLevel graph_optimization_level);
 
-OrtStatus* OrtApiCreateSession(OrtApi* api, OrtEnv* env, const char* model_path, OrtSessionOptions* opts, OrtSession** session);
+OrtStatus* OrtApiCreateSessionFromArray(OrtApi* api, OrtEnv* env, const void* model_data, size_t model_data_len,
+    OrtSessionOptions* opts, OrtSession** session);
 void OrtApiReleaseSession(OrtApi* api, OrtSession* session);
 
 OrtStatus* OrtApiCreateCpuMemoryInfo(OrtApi* api, enum OrtAllocatorType alloc_type, enum OrtMemType mem_type, OrtMemoryInfo** minfo);

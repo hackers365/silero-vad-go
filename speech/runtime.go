@@ -7,6 +7,7 @@ import "C"
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"unsafe"
 )
@@ -86,13 +87,15 @@ func (c RuntimeConfig) withDefaults() RuntimeConfig {
 
 // Runtime owns ONNX Runtime resources and a small pool of reusable sessions.
 type Runtime struct {
-	api         *C.OrtApi
-	env         *C.OrtEnv
-	sessionOpts *C.OrtSessionOptions
-	memoryInfo  *C.OrtMemoryInfo
-	cStrings    map[string]*C.char
-	sessions    []*C.OrtSession
-	pool        chan *C.OrtSession
+	api          *C.OrtApi
+	env          *C.OrtEnv
+	sessionOpts  *C.OrtSessionOptions
+	memoryInfo   *C.OrtMemoryInfo
+	cStrings     map[string]*C.char
+	sessions     []*C.OrtSession
+	pool         chan *C.OrtSession
+	modelData    unsafe.Pointer
+	modelDataLen C.size_t
 
 	mu        sync.RWMutex
 	destroyed bool
@@ -104,14 +107,29 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 	}
 	cfg = cfg.withDefaults()
 
+	modelData, err := os.ReadFile(cfg.ModelPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read model: %w", err)
+	}
+	if len(modelData) == 0 {
+		return nil, fmt.Errorf("failed to read model: empty model file")
+	}
+	modelDataPtr := C.CBytes(modelData)
+	if modelDataPtr == nil {
+		return nil, fmt.Errorf("failed to allocate model data")
+	}
+
 	rt := &Runtime{
-		cStrings: map[string]*C.char{},
-		sessions: make([]*C.OrtSession, 0, cfg.NumSessions),
-		pool:     make(chan *C.OrtSession, cfg.NumSessions),
+		cStrings:     map[string]*C.char{},
+		sessions:     make([]*C.OrtSession, 0, cfg.NumSessions),
+		pool:         make(chan *C.OrtSession, cfg.NumSessions),
+		modelData:    modelDataPtr,
+		modelDataLen: C.size_t(len(modelData)),
 	}
 
 	rt.api = C.OrtGetApi()
 	if rt.api == nil {
+		_ = rt.Destroy()
 		return nil, fmt.Errorf("failed to get API")
 	}
 
@@ -156,10 +174,9 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 		return nil, fmt.Errorf("failed to set session graph optimization level: %s", msg)
 	}
 
-	rt.cStrings["modelPath"] = C.CString(cfg.ModelPath)
 	for i := 0; i < cfg.NumSessions; i++ {
 		var session *C.OrtSession
-		status = C.OrtApiCreateSession(rt.api, rt.env, rt.cStrings["modelPath"], rt.sessionOpts, &session)
+		status = C.OrtApiCreateSessionFromArray(rt.api, rt.env, rt.modelData, rt.modelDataLen, rt.sessionOpts, &session)
 		if status != nil {
 			msg := C.GoString(C.OrtApiGetErrorMessage(rt.api, status))
 			C.OrtApiReleaseStatus(rt.api, status)
@@ -224,6 +241,10 @@ func (rt *Runtime) Destroy() error {
 		if ptr != nil {
 			C.free(unsafe.Pointer(ptr))
 		}
+	}
+	if rt.modelData != nil {
+		C.free(rt.modelData)
+		rt.modelData = nil
 	}
 
 	return nil

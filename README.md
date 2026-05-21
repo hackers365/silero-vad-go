@@ -14,7 +14,7 @@
 
 - [Golang](https://go.dev/doc/install) >= v1.21
 - A C compiler (e.g. GCC)
-- ONNX Runtime (v1.18.1)
+- ONNX Runtime (v1.17 or newer)
 - A [Silero VAD](https://github.com/snakers4/silero-vad) model (v5)
 
 ### Usage
@@ -95,6 +95,31 @@ C_INCLUDE_PATH="/usr/local/include/onnxruntime-linux-x64-1.18.1/include"
 LIBRARY_PATH="/usr/local/lib/onnxruntime-linux-x64-1.18.1/lib"
 C_INCLUDE_PATH="/usr/local/include/onnxruntime-linux-x64-1.18.1/include"
 sudo update_dyld_shared_cache
+```
+
+#### Windows
+
+Install a GCC toolchain such as MSYS2 UCRT64 or MinGW-w64, and make sure `gcc.exe` is available in `PATH`.
+Then point CGO to the ONNX Runtime headers and import library:
+
+```powershell
+$env:CGO_ENABLED = "1"
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+$env:C_INCLUDE_PATH = "E:\onnxruntime-win-x64-1.21.0\include"
+$env:LIBRARY_PATH = "E:\onnxruntime-win-x64-1.21.0\lib"
+```
+
+Windows loads DLLs from the executable directory before `PATH`, but may load an older `onnxruntime.dll`
+from `C:\Windows\System32` before checking `PATH`. For applications, copy the matching
+`onnxruntime.dll` next to your built `.exe`. For tests on a machine with an older system DLL, put
+`onnxruntime.dll` in the repository root, build the test binary into the root, and run it from the
+package directory:
+
+```powershell
+go test -c -o .\silero-vad-go-speech.test.exe ./speech
+Push-Location .\speech
+..\silero-vad-go-speech.test.exe "-test.v" "-test.failfast"
+Pop-Location
 ```
 
 ### License

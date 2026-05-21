@@ -1,9 +1,8 @@
-//go:build !darwin
-
 package speech
 
 // #cgo CFLAGS: -Wall -Werror -std=c99
 // #cgo LDFLAGS: -lonnxruntime
+// #include <string.h>
 // #include "ort_bridge.h"
 import "C"
 
@@ -37,11 +36,10 @@ func (s *Stream) Infer(samples []float32) (float32, error) {
 	}
 	defer rt.releaseSession(session)
 
-	// Create tensors
 	var pcmValue *C.OrtValue
-	pcmInputDims := []C.long{
+	pcmInputDims := []C.int64_t{
 		1,
-		C.long(len(pcm)),
+		C.int64_t(len(pcm)),
 	}
 	status := C.OrtApiCreateTensorWithDataAsOrtValue(rt.api, rt.memoryInfo, unsafe.Pointer(&pcm[0]), C.size_t(len(pcm)*4), &pcmInputDims[0], C.size_t(len(pcmInputDims)), C.ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &pcmValue)
 	defer C.OrtApiReleaseStatus(rt.api, status)
@@ -51,7 +49,7 @@ func (s *Stream) Infer(samples []float32) (float32, error) {
 	defer C.OrtApiReleaseValue(rt.api, pcmValue)
 
 	var stateValue *C.OrtValue
-	stateNodeInputDims := []C.long{2, 1, 128}
+	stateNodeInputDims := []C.int64_t{2, 1, 128}
 	status = C.OrtApiCreateTensorWithDataAsOrtValue(rt.api, rt.memoryInfo, unsafe.Pointer(&s.state[0]), C.size_t(stateLen*4), &stateNodeInputDims[0], C.size_t(len(stateNodeInputDims)), C.ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &stateValue)
 	defer C.OrtApiReleaseStatus(rt.api, status)
 	if status != nil {
@@ -60,7 +58,7 @@ func (s *Stream) Infer(samples []float32) (float32, error) {
 	defer C.OrtApiReleaseValue(rt.api, stateValue)
 
 	var rateValue *C.OrtValue
-	rateInputDims := []C.long{1}
+	rateInputDims := []C.int64_t{1}
 	rate := []C.int64_t{C.int64_t(s.cfg.SampleRate)}
 	status = C.OrtApiCreateTensorWithDataAsOrtValue(rt.api, rt.memoryInfo, unsafe.Pointer(&rate[0]), C.size_t(8), &rateInputDims[0], C.size_t(len(rateInputDims)), C.ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, &rateValue)
 	defer C.OrtApiReleaseStatus(rt.api, status)
@@ -69,7 +67,6 @@ func (s *Stream) Infer(samples []float32) (float32, error) {
 	}
 	defer C.OrtApiReleaseValue(rt.api, rateValue)
 
-	// Run inference
 	inputs := []*C.OrtValue{pcmValue, stateValue, rateValue}
 	outputs := []*C.OrtValue{nil, nil}
 
@@ -90,7 +87,6 @@ func (s *Stream) Infer(samples []float32) (float32, error) {
 	defer C.OrtApiReleaseValue(rt.api, outputs[0])
 	defer C.OrtApiReleaseValue(rt.api, outputs[1])
 
-	// Get output values from tensor data
 	var prob unsafe.Pointer
 	var stateN unsafe.Pointer
 
@@ -109,6 +105,5 @@ func (s *Stream) Infer(samples []float32) (float32, error) {
 	speechProb := *(*float32)(prob)
 	C.memcpy(unsafe.Pointer(&s.state[0]), stateN, stateLen*4)
 
-	// Return speech probability
 	return speechProb, nil
 }

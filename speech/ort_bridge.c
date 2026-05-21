@@ -7,7 +7,9 @@
 #include "ort_bridge.h"
 
 const OrtApi* OrtGetApi() {
-  return OrtGetApiBase()->GetApi(ORT_API_VERSION);
+  // This bridge only uses APIs available in v17; request that version so newer
+  // headers can still run with older compatible runtime DLLs.
+  return OrtGetApiBase()->GetApi(17);
 }
 
 void OrtApiReleaseStatus(OrtApi* api, OrtStatus* status) {
@@ -46,8 +48,9 @@ OrtStatus* OrtApiSetSessionGraphOptimizationLevel(OrtApi* api, OrtSessionOptions
   return api->SetSessionGraphOptimizationLevel(opts, graph_optimization_level);
 }
 
-OrtStatus* OrtApiCreateSession(OrtApi* api, OrtEnv* env, const char* model_path, OrtSessionOptions* opts, OrtSession** session) {
-  return api->CreateSession(env, model_path, opts, session);
+OrtStatus* OrtApiCreateSessionFromArray(OrtApi* api, OrtEnv* env, const void* model_data, size_t model_data_len,
+    OrtSessionOptions* opts, OrtSession** session) {
+  return api->CreateSessionFromArray(env, model_data, model_data_len, opts, session);
 }
 
 void OrtApiReleaseSession(OrtApi* api, OrtSession* session) {
